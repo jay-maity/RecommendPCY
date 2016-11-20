@@ -1,4 +1,5 @@
 from pyspark import SparkContext, SparkConf
+import operator
 
 
 class PCYFrequentItems:
@@ -79,27 +80,11 @@ class PCYFrequentItems:
         mul = 1
         for item in items:
             mul *= item
-        return mul%1000000
+        return mul%100000000
 
-    @staticmethod
-    def unique_set(item_group_hash):
+    def pcy_freq_items(self, item_group_rdd, hash_function, support_count):
         """
-        Get unique set from repeative items
-        :param item_group_hash:
-        :return:
-        """
-        val = item_group_hash[1]
-        key = item_group_hash[0]
-
-        used = set()
-        for item in val:
-            if item not in used:
-                used.add(item)
-        return (key, list(used))
-
-    def pcy_freq_items(self, item_group_rdd, passno, hash_function, support_count):
-        """
-        Get Candidate keys for next pass
+        Get Frequent items for a particular group of items
         :param item_group_rdd:
         :param passno:
         :param hash_function:
@@ -108,61 +93,42 @@ class PCYFrequentItems:
         """
         # Hash and Items mapping
         order_prod_hash = item_group_rdd\
-            .map(lambda x: ((hash_function(x), x)))
+            .map(lambda x: (hash_function(x), 1))
 
         # Group, filter and get unique item sets
-        frequent_items = order_prod_hash.groupByKey()\
-            .filter(lambda x: len(x[1]) > support_count)
+        frequent_items = order_prod_hash.reduceByKey(operator.add)\
+            .filter(lambda x: x[1] > support_count)\
+            .map(lambda x: x[0])
 
-        # Takes only unique items from repeative item sets
-        frequent_items_unique = frequent_items \
-            .map(PCYFrequentItems.unique_set)
+        return frequent_items
 
-        if self.IS_DEBUGGING:
-            frequent_items_count = frequent_items \
-                .map(lambda x: (x[0], len(x[1])))
-            print("Frequent item sets with hash after pass:" + str(passno))
-            print(frequent_items_count.collect())
-
-        # Get only frequent items by ignoring hash values
-        if passno == 1:
-            # Get rid of tuple if it is a single value
-            frequent_items_unique = frequent_items_unique.flatMap(lambda x: x[1][0])
-        else:
-            frequent_items_unique = frequent_items_unique.flatMap(lambda x: x[1])
-
-        return frequent_items_unique
-
-    @staticmethod
-    def remove_infrequent_items(frequent_item_set, items):
+    def pcy_pass(self, order_prod, pass_no, support_count, hashn, hashnplus1):
         """
-        Remove infrequent items from item list
-        :param frequent_item_set:
-        :param items:
+        Calculates frequent items and bitmap after n th pass
+        :param order_prod:
+        :param pass_no: no of pass
+        :param support_count:
         :return:
         """
-        new_items = []
-        for item in items:
-            if item in frequent_item_set:
-                new_items.append(item)
+        item_set_count = pass_no
+        order_prod_single = order_prod. \
+            flatMap(lambda x: PCYFrequentItems.
+                    group_items(x, item_set_count))
 
-        return new_items
+        frequent_items_n = self.pcy_freq_items(order_prod_single,
+                                               hashn,
+                                               support_count)
+        item_set_count += 1
 
-    @staticmethod
-    def rm_comp_prev_item_set(frequent_item_set, items):
-        """
-        Remove infrequent items from item list
-        :param frequent_item_set:
-        :param items:
-        :return:
-        """
-        for item in items:
-            if item not in frequent_item_set:
-                return None
+        order_prod_pairs = order_prod. \
+            flatMap(lambda x: PCYFrequentItems.group_items(x, item_set_count))
+        bitmap_nplus1 = self.pcy_freq_items(order_prod_pairs,
+                                            hashnplus1,
+                                            support_count)
 
-        return items
+        return frequent_items_n, bitmap_nplus1
 
-    def frequent_items(self, inputs, output):
+    def frequent_items(self, inputs, output, support_count):
         """Output correlation coefficient without mean formula
             Args:
                 inputs:Input file location
@@ -176,64 +142,22 @@ class PCYFrequentItems:
         text = spark_context.textFile(inputs)
         order_prod = text.map(PCYFrequentItems.map_nodes).cache()
 
+        pass_no = 1
+        freq_items, bitmap = self.pcy_pass(order_prod,
+                                           pass_no,
+                                           support_count,
+                                           PCYFrequentItems.hash2,
+                                           PCYFrequentItems.hash1)
         if self.IS_DEBUGGING:
-            print("Initial item list")
-            print(order_prod.collect())
+            print("Frequent "+str(pass_no)+"-group items after pass:"+str(pass_no))
+            print(freq_items.collect())
 
-        # ####################### Pass 1 ############################
-        item_set_count = 1
-        order_prod_single = order_prod.\
-            flatMap(lambda x: PCYFrequentItems.
-                    group_items(x, item_set_count))
+            print("Bitmap for " + str(pass_no+1) + "-group items after pass:" + str(pass_no))
+            print(bitmap.collect())
 
-        rdd_pass1 = self.pcy_freq_items(order_prod_single,
-                                        item_set_count,
-                                        PCYFrequentItems.
-                                        hash2,
-                                        2)
 
-        # order_prod = order_prod\
-        #     .map(lambda items: PCYFrequentItems.remove_infrequent_items(bc_pass1.value, items))
-
-        if self.IS_DEBUGGING:
-            print("After Item set count1:")
-            print(rdd_pass1.collect())
-
-            print("New list after removing infrequent items")
-            print(order_prod.collect())
-
-        # #########################################################################################
-
-        item_set_count = 2
-
-        # Broadcast way
-        # Estimation: for 1 million items it can take up to 30mb to create a set,
-        # which seems reasonable to broadcast
-        # TODO: Find a way to split broadcast variable and run in a loop
-        bc_item_set1 = spark_context.broadcast(set(rdd_pass1.collect()))
-
-        order_prod_pairs = order_prod.\
-            flatMap(lambda x: PCYFrequentItems.group_items(x, item_set_count))
-
-        rdd_pass2 = self.pcy_freq_items(order_prod_pairs, 2, PCYFrequentItems.hash1, 2)
-        freq_item_set2 = rdd_pass2.\
-            map(lambda x: PCYFrequentItems.rm_comp_prev_item_set(bc_item_set1.value, x))
-
-        if self.IS_DEBUGGING:
-            print("Print broadcast value")
-            print(bc_item_set1.value)
-
-            print("After item set count 2 rdd collect:")
-            print(rdd_pass2.collect())
-
-            print("After item set count 2 freq item set collect:")
-            print(freq_item_set2.collect())
-
-        bc_item_set1.destroy()
         order_prod.unpersist()
 
-
-
 if __name__ == "__main__":
-    pcy = PCYFrequentItems(is_debug=False)
-    pcy.frequent_items("C:/BigData/SFU/TestData/",None)
+    pcy = PCYFrequentItems(is_debug=True)
+    pcy.frequent_items("C:/BigData/SFU/TestData/",None,2)
