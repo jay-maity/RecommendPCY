@@ -1,4 +1,6 @@
 from pyspark import SparkContext, SparkConf
+import pyspark_cassandra
+from cassandra.cluster import Cluster
 import operator
 
 
@@ -8,6 +10,9 @@ class PCYFrequentItems:
     """
 
     IS_DEBUGGING = False
+    HOSTS_CLUSTER = ['199.60.17.136', '199.60.17.189']
+    HOSTS_LOCAL = ['127.0.0.1']
+    keyspace = 'cmpt732'
 
     def __init__(self, is_debug):
         """
@@ -51,11 +56,33 @@ class PCYFrequentItems:
         Map line into graph node key = value as array
         """
         key_values = line.split(":")
-        key = int(key_values[0])
+        # key = int(key_values[0])
         values = []
         if key_values[1].strip() != "":
             values = [int(node) for node in key_values[1].strip().split(' ')]
         return values
+
+    @staticmethod
+    def filter_pairs(pair, hosts, keyspace,  hashfunction):
+        """
+        Filter pairs by querying from cassandra table
+        :return:
+        """
+
+        cluster = Cluster(hosts)
+        session = cluster.connect(keyspace)
+        # print('select item from pcyfreqitem1 where item = %d' % pair[0])
+        # print('select item from pcyfreqitem1 where item = %d' % pair[1])
+        # print('select hash from pcybitmap2 where hash = %d' % hashfunction(pair))
+
+        item1 = session.execute('select item from pcyfreqitem1 where item = %d' % pair[0])
+        item2 = session.execute('select item from pcyfreqitem1 where item = %d' % pair[1])
+        bitmap = session.execute('select hash from pcybitmap2 where hash = %d' % hashfunction(pair))
+
+        if item1 and item2 and bitmap:
+            return True
+        else:
+            return False
 
     @staticmethod
     def hash1(items):
@@ -102,7 +129,7 @@ class PCYFrequentItems:
 
         return frequent_items
 
-    def pcy_pass(self, order_prod, pass_no, support_count, hashn, hashnplus1):
+    def pcy_pass(self, order_prod, pass_no, support_count, hashn, hashnplus1, is_nplus1_cache=False):
         """
         Calculates frequent items and bitmap after n th pass
         :param order_prod:
@@ -122,20 +149,30 @@ class PCYFrequentItems:
 
         order_prod_pairs = order_prod. \
             flatMap(lambda x: PCYFrequentItems.group_items(x, item_set_count))
+
+        if is_nplus1_cache:
+            order_prod_pairs = order_prod_pairs.cache()
+
         bitmap_nplus1 = self.pcy_freq_items(order_prod_pairs,
                                             hashnplus1,
                                             support_count)
 
-        return frequent_items_n, bitmap_nplus1
+        return frequent_items_n, bitmap_nplus1, order_prod_pairs
 
-    def frequent_items(self, inputs, output, support_count):
+    def frequent_items(self, inputs, output, support_count, is_local_host=1):
         """Output correlation coefficient without mean formula
             Args:
                 inputs:Input file location
                 output:Output file location
+                support_count:
             """
+        if is_local_host == 1:
+            self.hosts = self.HOSTS_LOCAL
+        else:
+            self.hosts = self.HOSTS_CLUSTER
+
         # Spark Configuration
-        conf = SparkConf().setAppName('FreqItemtest')
+        conf = SparkConf().setAppName('FreqItemtest').set('spark.cassandra.connection.host', ','.join(self.hosts))
         spark_context = SparkContext(conf=conf)
 
         # File loading
@@ -143,11 +180,12 @@ class PCYFrequentItems:
         order_prod = text.map(PCYFrequentItems.map_nodes).cache()
 
         pass_no = 1
-        freq_items, bitmap = self.pcy_pass(order_prod,
-                                           pass_no,
-                                           support_count,
-                                           PCYFrequentItems.hash2,
-                                           PCYFrequentItems.hash1)
+        freq_items, bitmap, all_pairs = self.pcy_pass(order_prod,
+                                                      pass_no,
+                                                      support_count,
+                                                      PCYFrequentItems.hash2,
+                                                      PCYFrequentItems.hash1,
+                                                      is_nplus1_cache=True)
         if self.IS_DEBUGGING:
             print("Frequent "+str(pass_no)+"-group items after pass:"+str(pass_no))
             print(freq_items.collect())
@@ -155,9 +193,27 @@ class PCYFrequentItems:
             print("Bitmap for " + str(pass_no+1) + "-group items after pass:" + str(pass_no))
             print(bitmap.collect())
 
+        # Making freq items Ready to save to cassandra
+        freq_items = freq_items.map(lambda x: {'item': x})
+        freq_items.saveToCassandra(self.keyspace, "pcyfreqitem1")
 
+        # Making bitmap Ready to save to cassandra
+        bitmap = bitmap.map(lambda x: {'hash': x})
+        bitmap.saveToCassandra(self.keyspace, "pcybitmap2")
+
+        frequent_pairs = all_pairs.filter(lambda x: PCYFrequentItems.filter_pairs(x, self.hosts,
+                                                                                  self.keyspace,
+                                                                                  PCYFrequentItems.hash2))
+        if self.IS_DEBUGGING:
+            print(all_pairs.collect())
+            print(frequent_pairs.collect())
+
+        frequent_pairs.saveAsTextFile(output)
+
+        all_pairs.unpersist()
         order_prod.unpersist()
+
 
 if __name__ == "__main__":
     pcy = PCYFrequentItems(is_debug=True)
-    pcy.frequent_items("C:/BigData/SFU/TestData/",None,2)
+    pcy.frequent_items("/home/jay/BigData/PCY/TestData/", "/home/jay/BigData/PCY/output", 2, is_local_host=1)
