@@ -1,8 +1,9 @@
 from pyspark import SparkContext, SparkConf
 import pyspark_cassandra
 from cassandra.cluster import Cluster
-import operator
+import operator, sys
 
+cluster = None
 
 class PCYFrequentItems:
     """
@@ -12,7 +13,7 @@ class PCYFrequentItems:
     IS_DEBUGGING = False
     HOSTS_CLUSTER = ['199.60.17.136', '199.60.17.189']
     HOSTS_LOCAL = ['127.0.0.1']
-    keyspace = 'cmpt732'
+    keyspace = 'anajeeb'
 
     def __init__(self, is_debug):
         """
@@ -63,21 +64,14 @@ class PCYFrequentItems:
         return values
 
     @staticmethod
-    def filter_pairs(pair, hosts, keyspace,  hashfunction):
-        """
-        Filter pairs by querying from cassandra table
-        :return:
-        """
-
-        cluster = Cluster(hosts)
-        session = cluster.connect(keyspace)
-        # print('select item from pcyfreqitem1 where item = %d' % pair[0])
-        # print('select item from pcyfreqitem1 where item = %d' % pair[1])
-        # print('select hash from pcybitmap2 where hash = %d' % hashfunction(pair))
-
-        item1 = session.execute('select item from pcyfreqitem1 where item = %d' % pair[0])
-        item2 = session.execute('select item from pcyfreqitem1 where item = %d' % pair[1])
-        bitmap = session.execute('select hash from pcybitmap2 where hash = %d' % hashfunction(pair))
+    def filter_pairs(pair, hosts, keyspace,  hashfunction):    
+        global cluster, session
+        if cluster is None:
+            cluster = Cluster(hosts)
+            session = cluster.connect(keyspace)
+        item1 = session.execute('select item from fq_items where item = %d' % pair[0])
+        item2 = session.execute('select item from fq_items where item = %d' % pair[1])
+        bitmap = session.execute('select bucket from bitmap where bucket = %d' % hashfunction(pair))
 
         if item1 and item2 and bitmap:
             return True
@@ -89,7 +83,7 @@ class PCYFrequentItems:
         """
         Hash function for calculation
         :param items:
-        :return:
+        :ret urn:
         """
         mul = 1
         for item in items:
@@ -195,11 +189,11 @@ class PCYFrequentItems:
 
         # Making freq items Ready to save to cassandra
         freq_items = freq_items.map(lambda x: {'item': x})
-        freq_items.saveToCassandra(self.keyspace, "pcyfreqitem1")
+        freq_items.saveToCassandra(self.keyspace, "fq_items")
 
         # Making bitmap Ready to save to cassandra
-        bitmap = bitmap.map(lambda x: {'hash': x})
-        bitmap.saveToCassandra(self.keyspace, "pcybitmap2")
+        bitmap = bitmap.map(lambda x: {'bucket': x})
+        bitmap.saveToCassandra(self.keyspace, "bitmap")
 
         frequent_pairs = all_pairs.filter(lambda x: PCYFrequentItems.filter_pairs(x, self.hosts,
                                                                                   self.keyspace,
@@ -215,5 +209,8 @@ class PCYFrequentItems:
 
 
 if __name__ == "__main__":
+    input = sys.argv[1]
+    output = sys.argv[2]
     pcy = PCYFrequentItems(is_debug=True)
-    pcy.frequent_items("/home/jay/BigData/PCY/TestData/", "/home/jay/BigData/PCY/output", 2, is_local_host=1)
+    pcy.frequent_items(input, output, 2, is_local_host=0)
+
