@@ -2,6 +2,10 @@ from pyspark import SparkContext, SparkConf
 import pyspark_cassandra
 from cassandra.cluster import Cluster
 import operator
+import json
+
+cluster = None
+session = None
 
 
 class PCYFrequentItems:
@@ -10,16 +14,16 @@ class PCYFrequentItems:
     """
 
     IS_DEBUGGING = False
-    HOSTS_CLUSTER = ['199.60.17.136', '199.60.17.189']
-    HOSTS_LOCAL = ['127.0.0.1']
-    keyspace = 'cmpt732'
+    config_object = None
 
-    def __init__(self, is_debug):
+    def __init__(self, is_debug, config_file="config.json"):
         """
         Sets the initial debiggin parameter
         :param is_debug: Print collect messages if set true
         """
         self.IS_DEBUGGING = is_debug
+        json_data = open(config_file).read()
+        self.config_object = json.loads(json_data)
 
     @staticmethod
     def group_items(basket, group_size):
@@ -30,9 +34,13 @@ class PCYFrequentItems:
         :param group_size: Size of the item_group to form
         :return:
         """
-        #assert (group_size > 1) , "Use group size > 1 otherwise consider each element"
+        assert (group_size >= 1 and type(group_size) is int), \
+            "Please use group size as Integer and  > 0"
+
+        # In case of group size is one simply return each items
         if group_size == 1:
             return [(item,) for item in basket]
+
         item_groups = []
         if len(basket) >= group_size:
             # Sort the basket
@@ -63,51 +71,28 @@ class PCYFrequentItems:
         return values
 
     @staticmethod
-    def filter_pairs(pair, hosts, keyspace,  hashfunction):
+    def filter_pairs(pair, hosts, keyspace,  hashfunction, item_table, bitmap_table):
         """
         Filter pairs by querying from cassandra table
         :return:
         """
 
-        cluster = Cluster(hosts)
-        session = cluster.connect(keyspace)
-        # print('select item from pcyfreqitem1 where item = %d' % pair[0])
-        # print('select item from pcyfreqitem1 where item = %d' % pair[1])
-        # print('select hash from pcybitmap2 where hash = %d' % hashfunction(pair))
+        global cluster, session
+        if cluster is None:
+            cluster = Cluster(hosts)
+            session = cluster.connect(keyspace)
 
-        item1 = session.execute('select item from pcyfreqitem1 where item = %d' % pair[0])
-        item2 = session.execute('select item from pcyfreqitem1 where item = %d' % pair[1])
-        bitmap = session.execute('select hash from pcybitmap2 where hash = %d' % hashfunction(pair))
+        item1 = session.execute("select item from "+item_table+" where item = %d" % pair[0])
+        item2 = session.execute("select item from " + item_table+" where item = %d" % pair[1])
+        bitmap = session.execute("select hash from "+bitmap_table+" where hash = %d" % hashfunction(pair))
+
+        print("Pair checked " + str(pair[0]))
 
         if item1 and item2 and bitmap:
             return True
         else:
             return False
 
-    @staticmethod
-    def hash1(items):
-        """
-        Hash function for calculation
-        :param items:
-        :return:
-        """
-        mul = 1
-        for item in items:
-            mul *= item
-        return mul%25
-
-    @staticmethod
-    def hash2(items):
-        """
-        Hash function for calculation
-        :param items:
-        :return:
-        """
-
-        mul = 1
-        for item in items:
-            mul *= item
-        return mul%100000000
 
     def pcy_freq_items(self, item_group_rdd, hash_function, support_count):
         """
@@ -159,21 +144,51 @@ class PCYFrequentItems:
 
         return frequent_items_n, bitmap_nplus1, order_prod_pairs
 
-    def frequent_items(self, inputs, output, support_count, is_local_host=1):
+    @staticmethod
+    def pair_bitmap(items):
+        """
+        Hash function for calculation
+        :param items:
+        :return:
+        """
+        mul = 1
+        for item in items:
+            mul *= item
+        return mul % 5000000
+
+    @staticmethod
+    def single(items):
+        """
+        Hash function for calculation
+        :param items:
+        :return:
+        """
+
+        mul = 1
+        for item in items:
+            mul *= item
+        return mul % 100000000
+
+    def configure(self):
+        """
+        Configure spark and cassandra objects
+        :param is_local_host:
+        :return:
+        """
+        # Spark Configuration
+        conf = SparkConf().setAppName('Frequent Item Sets'). \
+            set('spark.cassandra.connection.host', ','.join(self.config_object["CassandraHosts"]))
+        return SparkContext(conf=conf)
+
+    def frequent_items(self, inputs, output, support_count):
         """Output correlation coefficient without mean formula
             Args:
                 inputs:Input file location
                 output:Output file location
                 support_count:
             """
-        if is_local_host == 1:
-            self.hosts = self.HOSTS_LOCAL
-        else:
-            self.hosts = self.HOSTS_CLUSTER
 
-        # Spark Configuration
-        conf = SparkConf().setAppName('FreqItemtest').set('spark.cassandra.connection.host', ','.join(self.hosts))
-        spark_context = SparkContext(conf=conf)
+        spark_context = self.configure()
 
         # File loading
         text = spark_context.textFile(inputs)
@@ -183,8 +198,8 @@ class PCYFrequentItems:
         freq_items, bitmap, all_pairs = self.pcy_pass(order_prod,
                                                       pass_no,
                                                       support_count,
-                                                      PCYFrequentItems.hash2,
-                                                      PCYFrequentItems.hash1,
+                                                      PCYFrequentItems.single,
+                                                      PCYFrequentItems.pair_bitmap,
                                                       is_nplus1_cache=True)
         if self.IS_DEBUGGING:
             print("Frequent "+str(pass_no)+"-group items after pass:"+str(pass_no))
@@ -195,25 +210,31 @@ class PCYFrequentItems:
 
         # Making freq items Ready to save to cassandra
         freq_items = freq_items.map(lambda x: {'item': x})
-        freq_items.saveToCassandra(self.keyspace, "pcyfreqitem1")
+        freq_items.saveToCassandra(self.config_object["KeySpace"], self.config_object["Item1Table"])
 
         # Making bitmap Ready to save to cassandra
         bitmap = bitmap.map(lambda x: {'hash': x})
-        bitmap.saveToCassandra(self.keyspace, "pcybitmap2")
+        bitmap.saveToCassandra(self.config_object["KeySpace"], self.config_object["Bitmap2Table"])
 
-        frequent_pairs = all_pairs.filter(lambda x: PCYFrequentItems.filter_pairs(x, self.hosts,
-                                                                                  self.keyspace,
-                                                                                  PCYFrequentItems.hash2))
+        frequent_pairs = all_pairs.filter(lambda x: PCYFrequentItems.filter_pairs(x,
+                                                                                  self.config_object["CassandraHosts"],
+                                                                                  self.config_object["KeySpace"],
+                                                                                  PCYFrequentItems.pair_bitmap,
+                                                                                  self.config_object["Item1Table"],
+                                                                                  self.config_object["Bitmap2Table"]))
         if self.IS_DEBUGGING:
             print(all_pairs.collect())
             print(frequent_pairs.collect())
 
         frequent_pairs.saveAsTextFile(output)
 
+        #frequent_pairs = frequent_pairs.map(lambda x: {'productid1': x[0], 'productid2':x[1]})
+        #frequent_pairs.saveToCassandra(self.config_object["KeySpace"], self.config_object["RecommendTable"])
+
         all_pairs.unpersist()
         order_prod.unpersist()
 
 
 if __name__ == "__main__":
-    pcy = PCYFrequentItems(is_debug=True)
-    pcy.frequent_items("/home/jay/BigData/PCY/TestData/", "/home/jay/BigData/PCY/output", 2, is_local_host=1)
+    pcy = PCYFrequentItems(is_debug=False)
+    pcy.frequent_items("/home/jay/BigData/PCY/largeTPCH/", "/home/jay/BigData/PCY/output", 2)

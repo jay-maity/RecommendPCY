@@ -1,0 +1,7 @@
+{
+  "CassandraHosts":["127.0.0.1"],
+  "KeySpace":"cmpt732",
+  "Item1Table": "pcyfreqitem1",
+  "Bitmap2Table": "pcybitmap2",
+  "RecommendTable": "recommendproducts"
+}
