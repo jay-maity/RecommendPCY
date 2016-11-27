@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Product Recommendation</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="">
+    <meta name="author" content="">
+    <!-- Le styles -->
+    <link href="../static/assets/css/bootstrap.css" rel="stylesheet">
+    <style type="text/css">
+        body {
+            padding-top: 60px;
+            padding-bottom: 40px;
+        }
+
+        table {
+            font-family: arial, sans-serif;
+            border-collapse: collapse;
+            width: 100%;
+        }
+
+        td, th {
+            border: 1px solid #dddddd;
+            text-align: left;
+            padding: 8px;
+        }
+        /* Supporting marketing content */
+      .marketing {
+          margin: 60px 0;
+      }
+      .marketing p + h4 {
+        margin-top: 28px;
+      }
+    </style>
+    <link href="../static/assets/css/bootstrap-responsive.css" rel="stylesheet">
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.9.1/jquery.min.js"></script>
+    <!-- HTML5 shim, for IE6-8 support of HTML5 elements -->
+    <!--[if lt IE 9]>
+    <script src="../static/assets/js/html5shiv.js"></script>
+    <![endif]-->
+
+    <script type=text/javascript>
+        $(document).ready(function () {
+            $('#button_pid').click(function () {
+                $.ajax({
+                    url: '/getRecommendationById',
+                    data: $('form').serialize(),
+                    type: 'POST',
+                    success: function (response) {
+                                var response_json = jQuery.parseJSON(response);
+                                var html = '';
+                                $.each(response_json, function (i, item) {
+                                    if(i == 0){
+                                        return
+                                    }
+
+                                    html  ='<div class="col-sm-3 col-xs-6 similar-prod-item">'+
+                                        '<a href="#">'+
+                                            '<img src="'+item.image+'" class="img-responsive" />'+
+                                            '<h6>'+item.description+'</h6>'
+                                            '<h5></h5>'+
+                                        '<div class="star-rating" style="background-position: 0px -207.0px;">&nbsp;</div>'+
+                                        '</a>'+
+                                        '</div>';
+                                    $(html).appendTo('.similarItemsDiv');
+                                });
+                               $('#main_img').attr('src', response_json[0].image);
+                               $('#main_desc').text(response_json[0].description);
+
+
+                        console.log(response);
+                    },
+                    error: function (error) {
+                        console.log(error);
+                    }
+                });
+            });
+
+        });
+
+    </script>
+
+
+
+    <!-- Fav and touch icons -->
+    <link rel="apple-touch-icon-precomposed" sizes="144x144"
+          href="../static/assets/ico/apple-touch-icon-144-precomposed.png">
+    <link rel="apple-touch-icon-precomposed" sizes="114x114"
+          href="../static/assets/ico/apple-touch-icon-114-precomposed.png">
+    <link rel="apple-touch-icon-precomposed" sizes="72x72"
+          href="../static/assets/ico/apple-touch-icon-72-precomposed.png">
+    <link rel="apple-touch-icon-precomposed" href="../static/assets/ico/apple-touch-icon-57-precomposed.png">
+    <link rel="shortcut icon" href="../static/assets/ico/favicon.png">
+</head>
+
+<body>
+
+    <form class="mainform" action="/getRecommendationById" method="post" role="form">
+
+         <div class="container">
+
+                <!-- Main hero unit for a primary marketing message or call to action -->
+                <div class="hero-unit">
+                    <input type="number" id="product_id" name="prod_id" placeholder="Product ID"/>
+                    <input type="button" id="button_pid" class="btn btn-primary" value="Search&raquo;">
+                    <div id="original_display">
+
+                    </div>
+                </div>
+
+        </div>
+        <div class="marketing" style="align: center;">
+            <div class="span6">
+                <table id ="display">
+                  <tr>
+                    <th>Description</th>
+                    <th>Image</th>
+                  </tr>
+                </table>
+            </div>
+        </div>
+    </form>
+
+
+    <!-- Le javascript
+    ================================================== -->
+    <!-- Placed at the end of the document so the pages load faster -->
+    <script src="../static/assets/js/jquery.js"></script>
+    <script src="../static/assets/js/bootstrap-transition.js"></script>
+    <script src="../static/assets/js/bootstrap-alert.js"></script>
+    <script src="../static/assets/js/bootstrap-modal.js"></script>
+    <script src="../static/assets/js/bootstrap-dropdown.js"></script>
+    <script src="../static/assets/js/bootstrap-scrollspy.js"></script>
+    <script src="../static/assets/js/bootstrap-tab.js"></script>
+    <script src="../static/assets/js/bootstrap-tooltip.js"></script>
+    <script src="../static/assets/js/bootstrap-popover.js"></script>
+    <script src="../static/assets/js/bootstrap-button.js"></script>
+    <script src="../static/assets/js/bootstrap-collapse.js"></script>
+    <script src="../static/assets/js/bootstrap-carousel.js"></script>
+    <script src="../static/assets/js/bootstrap-typeahead.js"></script>
+
+</body>
+</html>
