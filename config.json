@@ -3,5 +3,6 @@
   "KeySpace":"cmpt732",
   "Item1Table": "pcyfreqitem1",
   "Bitmap2Table": "pcybitmap2",
-  "RecommendTable": "recommendproducts"
+  "RecommendTable": "recommendproducts",
+  "PrimeNumber": 999917
 }

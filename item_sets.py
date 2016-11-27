@@ -3,6 +3,7 @@ import pyspark_cassandra
 from cassandra.cluster import Cluster
 import operator
 import json
+import sys
 
 cluster = None
 session = None
@@ -93,7 +94,6 @@ class PCYFrequentItems:
         else:
             return False
 
-
     def pcy_freq_items(self, item_group_rdd, hash_function, support_count):
         """
         Get Frequent items for a particular group of items
@@ -147,14 +147,15 @@ class PCYFrequentItems:
     @staticmethod
     def pair_bitmap(items):
         """
-        Hash function for calculation
+        Hash function for calculation for pairs
         :param items:
         :return:
         """
+
         mul = 1
         for item in items:
-            mul *= item
-        return mul % 5000000
+            mul *= ((2*item)+1)
+        return mul % 999917
 
     @staticmethod
     def single(items):
@@ -216,17 +217,19 @@ class PCYFrequentItems:
         bitmap = bitmap.map(lambda x: {'hash': x})
         bitmap.saveToCassandra(self.config_object["KeySpace"], self.config_object["Bitmap2Table"])
 
-        frequent_pairs = all_pairs.filter(lambda x: PCYFrequentItems.filter_pairs(x,
-                                                                                  self.config_object["CassandraHosts"],
-                                                                                  self.config_object["KeySpace"],
-                                                                                  PCYFrequentItems.pair_bitmap,
-                                                                                  self.config_object["Item1Table"],
-                                                                                  self.config_object["Bitmap2Table"]))
-        if self.IS_DEBUGGING:
-            print(all_pairs.collect())
-            print(frequent_pairs.collect())
+        print(all_pairs.count())
 
-        frequent_pairs.saveAsTextFile(output)
+        # frequent_pairs = all_pairs.filter(lambda x: PCYFrequentItems.filter_pairs(x,
+        #                                                                           self.config_object["CassandraHosts"],
+        #                                                                           self.config_object["KeySpace"],
+        #                                                                           PCYFrequentItems.pair_bitmap,
+        #                                                                           self.config_object["Item1Table"],
+        #                                                                           self.config_object["Bitmap2Table"]))
+        # if self.IS_DEBUGGING:
+        #     print(all_pairs.collect())
+        #     print(frequent_pairs.collect())
+        #
+        # frequent_pairs.saveAsTextFile(output)
 
         #frequent_pairs = frequent_pairs.map(lambda x: {'productid1': x[0], 'productid2':x[1]})
         #frequent_pairs.saveToCassandra(self.config_object["KeySpace"], self.config_object["RecommendTable"])
@@ -235,6 +238,17 @@ class PCYFrequentItems:
         order_prod.unpersist()
 
 
-if __name__ == "__main__":
+def main():
+    """
+    Handles parameters for the file to run
+    :return:
+    """
+    input_path = sys.argv[1]
+    output_path = sys.argv[2]
+    support_thresold = int(sys.argv[3])
+
     pcy = PCYFrequentItems(is_debug=False)
-    pcy.frequent_items("/home/jay/BigData/PCY/largeTPCH/", "/home/jay/BigData/PCY/output", 2)
+    pcy.frequent_items(input_path, output_path, support_thresold)
+
+if __name__ == "__main__":
+    main()
