@@ -1,9 +1,12 @@
-from pyspark import SparkContext, SparkConf
-import pyspark_cassandra
-from cassandra.cluster import Cluster
+""" Frequent item discovery by PCY algorithm"""
+
 import operator
 import json
 import sys
+from pyspark import SparkContext, SparkConf
+import pyspark_cassandra
+from cassandra.cluster import Cluster
+
 
 cluster = None
 session = None
@@ -35,7 +38,7 @@ class PCYFrequentItems:
         :param group_size: Size of the item_group to form
         :return:
         """
-        assert (group_size >= 1 and type(group_size) is int), \
+        assert (group_size >= 1 and isinstance(group_size, int)), \
             "Please use group size as Integer and  > 0"
 
         # In case of group size is one simply return each items
@@ -52,7 +55,7 @@ class PCYFrequentItems:
                 # until end
                 # If base is [2,3] and basket is [2,3,4,5]
                 # then creates [2,3,4], [2,3,5]
-                base_item_count = i + (group_size -1)
+                base_item_count = i + (group_size - 1)
                 base_items = basket[i:base_item_count]
 
                 for item in basket[base_item_count:]:
@@ -72,7 +75,7 @@ class PCYFrequentItems:
         return values
 
     @staticmethod
-    def filter_pairs(pair, hosts, keyspace,  hashfunction, item_table, bitmap_table):
+    def filter_pairs(pair, hosts, keyspace, hashfunction, item_table, bitmap_table):
         """
         Filter pairs by querying from cassandra table
         :return:
@@ -83,16 +86,30 @@ class PCYFrequentItems:
             cluster = Cluster(hosts)
             session = cluster.connect(keyspace)
 
-        item1 = session.execute("select item from "+item_table+" where item = %d" % pair[0])
-        item2 = session.execute("select item from " + item_table+" where item = %d" % pair[1])
-        bitmap = session.execute("select hash from "+bitmap_table+" where hash = %d" % hashfunction(pair))
+        item1 = session.execute("select item from "
+                                + item_table
+                                + " where item = %d" % pair[0])
+
+        item2 = session.execute("select item from "
+                                + item_table
+                                + " where item = %d" % pair[1])
+
+        bitmap = session.execute("select hash from "
+                                 + bitmap_table
+                                 + " where hash = %d" % hashfunction(pair))
 
         print("Pair checked " + str(pair[0]))
 
-        if item1 and item2 and bitmap:
-            return True
-        else:
-            return False
+        return item1 and item2 and bitmap
+
+    @staticmethod
+    def filter_pairs_broadcast(pair, freq_pair, bitmap, hashfunction):
+        """
+        Filter pairs from broadcast variables
+        :return:
+        """
+
+        return pair[0] in freq_pair and pair[1] in freq_pair and hashfunction(pair) in bitmap
 
     def pcy_freq_items(self, item_group_rdd, hash_function, support_count):
         """
@@ -104,22 +121,26 @@ class PCYFrequentItems:
         :return:
         """
         # Hash and Items mapping
-        order_prod_hash = item_group_rdd\
+        order_prod_hash = item_group_rdd \
             .map(lambda x: (hash_function(x), 1))
 
         # Group, filter and get unique item sets
-        frequent_items = order_prod_hash.reduceByKey(operator.add)\
-            .filter(lambda x: x[1] > support_count)\
+        frequent_items = order_prod_hash.reduceByKey(operator.add) \
+            .filter(lambda x: x[1] > support_count) \
             .map(lambda x: x[0])
 
         return frequent_items
 
-    def pcy_pass(self, order_prod, pass_no, support_count, hashn, hashnplus1, is_nplus1_cache=False):
+    def pcy_pass(self, order_prod, pass_no, support_count, hashn, hashnplus1,
+                 is_nplus1_cache=False):
         """
         Calculates frequent items and bitmap after n th pass
         :param order_prod:
-        :param pass_no: no of pass
+        :param pass_no:
         :param support_count:
+        :param hashn:
+        :param hashnplus1:
+        :param is_nplus1_cache:
         :return:
         """
         item_set_count = pass_no
@@ -154,7 +175,7 @@ class PCYFrequentItems:
 
         mul = 1
         for item in items:
-            mul *= ((2*item)+1)
+            mul *= ((2 * item) + 1)
         return mul % 999917
 
     @staticmethod
@@ -181,12 +202,13 @@ class PCYFrequentItems:
             set('spark.cassandra.connection.host', ','.join(self.config_object["CassandraHosts"]))
         return SparkContext(conf=conf)
 
-    def frequent_items(self, inputs, output, support_count):
+    def frequent_items(self, inputs, output, support_count, is_broadcast=True):
         """Output correlation coefficient without mean formula
             Args:
                 inputs:Input file location
                 output:Output file location
                 support_count:
+                is_broadcast: Item pair will be found using broadcast or not
             """
 
         spark_context = self.configure()
@@ -203,36 +225,62 @@ class PCYFrequentItems:
                                                       PCYFrequentItems.pair_bitmap,
                                                       is_nplus1_cache=True)
         if self.IS_DEBUGGING:
-            print("Frequent "+str(pass_no)+"-group items after pass:"+str(pass_no))
+            print("Frequent " + str(pass_no) + "-group items after pass:" + str(pass_no))
             print(freq_items.collect())
 
-            print("Bitmap for " + str(pass_no+1) + "-group items after pass:" + str(pass_no))
+            print("Bitmap for " + str(pass_no + 1) + "-group items after pass:" + str(pass_no))
             print(bitmap.collect())
 
-        # Making freq items Ready to save to cassandra
-        freq_items = freq_items.map(lambda x: {'item': x})
-        freq_items.saveToCassandra(self.config_object["KeySpace"], self.config_object["Item1Table"])
+        # System will use broadcast based on user input
+        if is_broadcast:
 
-        # Making bitmap Ready to save to cassandra
-        bitmap = bitmap.map(lambda x: {'hash': x})
-        bitmap.saveToCassandra(self.config_object["KeySpace"], self.config_object["Bitmap2Table"])
+            bitmap_set = set(bitmap.collect())
+            freq_items_set = set(freq_items.collect())
 
-        print(all_pairs.count())
+            bitmap_broadast = spark_context.broadcast(bitmap_set)
+            freq_items_set = spark_context.broadcast(freq_items_set)
 
-        # frequent_pairs = all_pairs.filter(lambda x: PCYFrequentItems.filter_pairs(x,
-        #                                                                           self.config_object["CassandraHosts"],
-        #                                                                           self.config_object["KeySpace"],
-        #                                                                           PCYFrequentItems.pair_bitmap,
-        #                                                                           self.config_object["Item1Table"],
-        #                                                                           self.config_object["Bitmap2Table"]))
-        # if self.IS_DEBUGGING:
-        #     print(all_pairs.collect())
-        #     print(frequent_pairs.collect())
-        #
-        # frequent_pairs.saveAsTextFile(output)
+            frequent_pairs = all_pairs.filter(lambda x:
+                                              PCYFrequentItems.
+                                              filter_pairs_broadcast(x,
+                                                                     freq_items_set.value,
+                                                                     bitmap_broadast.value,
+                                                                     PCYFrequentItems.pair_bitmap
+                                                                     ))
 
-        #frequent_pairs = frequent_pairs.map(lambda x: {'productid1': x[0], 'productid2':x[1]})
-        #frequent_pairs.saveToCassandra(self.config_object["KeySpace"], self.config_object["RecommendTable"])
+        else:
+            # Making freq items Ready to save to cassandra
+            freq_items = freq_items.map(lambda x: {'item': x})
+            freq_items.saveToCassandra(self.config_object["KeySpace"],
+                                       self.config_object["Item1Table"])
+
+            # Making bitmap Ready to save to cassandra
+            bitmap = bitmap.map(lambda x: {'hash': x})
+            bitmap.saveToCassandra(self.config_object["KeySpace"],
+                                   self.config_object["Bitmap2Table"])
+
+            print(all_pairs.count())
+
+            frequent_pairs = all_pairs.filter(lambda x: PCYFrequentItems.
+                                              filter_pairs(x,
+                                                           self.config_object["CassandraHosts"],
+                                                           self.config_object["KeySpace"],
+                                                           PCYFrequentItems.pair_bitmap,
+                                                           self.config_object["Item1Table"],
+                                                           self.config_object["Bitmap2Table"]))
+
+        if self.IS_DEBUGGING:
+            print(all_pairs.collect())
+            print(frequent_pairs.collect())
+
+        # Saves as text file
+        frequent_pairs.saveAsTextFile(output)
+
+        frequent_pairs = frequent_pairs.\
+            map(lambda x: {'productid1': x[0], 'productid2': x[1]})
+        # Save final output to cassandra
+        frequent_pairs.saveToCassandra(self.config_object["KeySpace"],
+                                       self.config_object["RecommendTable"])
 
         all_pairs.unpersist()
         order_prod.unpersist()
@@ -247,8 +295,10 @@ def main():
     output_path = sys.argv[2]
     support_thresold = int(sys.argv[3])
 
-    pcy = PCYFrequentItems(is_debug=False)
-    pcy.frequent_items(input_path, output_path, support_thresold)
+    pcy = PCYFrequentItems(is_debug=True)
+    is_broadcast = True
+    pcy.frequent_items(input_path, output_path, support_thresold, is_broadcast)
+
 
 if __name__ == "__main__":
     main()
