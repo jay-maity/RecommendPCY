@@ -31,7 +31,7 @@ $ python app.py
 ```
 By default it runs on 0.0.0.0:5000, you can change the post and server by modifying last line of the code for app.py
 
-###How to search for recommended items
+### How to search for recommended items
 Open the link 0.0.0.0:5000 in web browser
 In the UI, search for item with product id 
 
