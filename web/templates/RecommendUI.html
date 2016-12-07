@@ -59,6 +59,14 @@
    <body data-gr-c-s-loaded="true">
       <script type=text/javascript>
         $(document).ready(function () {
+           $('#frm').on('keyup keypress', function(e) {
+              var keyCode = e.keyCode || e.which;
+              if (keyCode === 13) {
+                 $('#button_pid').trigger( "click" );
+                e.preventDefault();
+                return false;
+              }
+            });
             $('#button_pid').click(function () {
                debugger;
                 $.ajax({
@@ -1406,17 +1414,6 @@
             <!-- Main Nav End -->
          </div>
       </header>
-      <!-- Header End -->
-      <script src="http://secure.livechatinc.com/licence/null/script_data.js?t=1480216539733&amp;referrer=&amp;url=file%3A%2F%2F%2Fhome%2Fjay%2FBigData%2FPCY%2FRecommendPCY%2Ftest%2FOffice%2520Star%2520ProGrid%2520High%2520Back%2520Managers%2520Office%2520Chair%2520with%25205%2520lever%2520Multi%2520Function%2520Control%2520in%2520Titanium%2520Finish%2520-%252092892-30.html&amp;params=&amp;jsonp=__lc_data_183044"></script><script src="http://secure.livechatinc.com/licence/null/script_data.js?t=1480217976439&amp;referrer=&amp;url=file%3A%2F%2F%2Fhome%2Fjay%2FBigData%2FPCY%2FRecommendPCY%2Ftest%2FRecommendUI.html&amp;params=&amp;jsonp=__lc_data_736564"></script><script type="text/javascript">
-         $(document).ready(function () {
-             WS.Order.GetCartItemsCount(function (response) {
-                 var count = 0;
-                 if (!response.error) {
-                     $("#circle-cart-item").text(response.counter);
-                 }
-             });
-         });
-      </script>
       <!-- Banners -->
       <style type="text/css">
          /* Added as reference, to be removed after proper styling is applied */
