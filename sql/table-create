@@ -1,0 +1,16 @@
+
+CREATE TABLE pcybitmap2 (
+    hash int PRIMARY KEY
+)
+
+CREATE TABLE pcyitem1 (
+    item bigint PRIMARY KEY
+)
+
+CREATE TABLE recommendproducts (
+    productid1 int PRIMARY KEY,
+    productid2 int
+) 
+
+CREATE INDEX user_state ON recommendproducts (productid2);
+
