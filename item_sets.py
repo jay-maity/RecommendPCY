@@ -295,8 +295,16 @@ def main():
     output_path = sys.argv[2]
     support_thresold = int(sys.argv[3])
 
+    broadcast = 1
+    if len(sys.argv) > 4:
+        broadcast = int(sys.argv[4])
+
     pcy = PCYFrequentItems(is_debug=True)
-    is_broadcast = True
+    if broadcast == 1:
+        is_broadcast = True
+    else:
+        is_broadcast = False
+
     pcy.frequent_items(input_path, output_path, support_thresold, is_broadcast)
 
 
