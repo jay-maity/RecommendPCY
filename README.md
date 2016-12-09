@@ -16,7 +16,7 @@ There are two ways to execute the code
 2. Using broadcast to the cluster (It works well with 1million items and average basket size of 10)
 
 ```sh
-$ ${SPARK_HOME}/bin/spark-submit --master=local --packages TargetHolding/pyspark-cassandra:0.3.5 item_sets.py /inputpath /path <support_thresold>
+$ ${SPARK_HOME}/bin/spark-submit --master=local --packages TargetHolding/pyspark-cassandra:0.3.5 item_sets.py /inputpath /path <support_thresold> <broadcast=0,1>
 ```
 
 ### Web server setup to test
