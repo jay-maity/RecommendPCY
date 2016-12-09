@@ -1,0 +1,128 @@
+There are few steps to run the project.
+1. Prepare test data
+2. Create Necessary tables in cassandra
+3. Run spark file to get the output in cassandra
+4. Insert sample recommended products
+5. Configure Flask to run UI enviroment
+
+1.Prepare Data
+To create test data we have to run a python file which collects data from "tpch" dataset
+	Step 1: Copy the file datacollection/large_test_data.py in sfu cluster
+	Step 2: Run the file in following format to collect the data(Assuming tpch keyspace in cassandra exists)
+	spark-submit --master=yarn-cluster --packages TargetHolding/pyspark-cassandra:0.3.5 large_test_data.py <keyspace> <outputlocation>
+
+	Example (Actual command we ran on the sfu cluster)
+	module load sparkfix
+	spark-submit --master=yarn-client --packages TargetHolding/pyspark-cassandra:0.3.5 large_test_data.py tpch /user/jmaity/profget
+
+	Test data is now ready at the output location (/user/jmaity/profget)
+	(We might need to remove _SUCCESS file if we choose to use same location)
+	Example:hdfs dfs -rm /user/jmaity/profget/_SUCCESS
+
+
+2. Create Necessary tables in cassandra
+	Open cql shell to create few tables:
+	Example: cqlsh --cqlversion=3.4.2 199.60.17.136
+
+	and go to the keyspace you want to use
+	Example: USE jmaity;
+
+	Now run the script provided at /sql/table-create.txt
+	It includes the following, 
+	CREATE TABLE pcybitmap2 (
+	    hash int PRIMARY KEY
+	);
+
+	CREATE TABLE pcyitem1 (
+	    item bigint PRIMARY KEY
+	);
+
+	CREATE TABLE recommendproducts (
+	    productid1 int PRIMARY KEY,
+	    productid2 int
+	);
+
+	CREATE INDEX user_state ON recommendproducts (productid2);
+
+3. Run python file to get the output in cassandra
+
+	Step 1. Copy two files into the cluster 1. item_sets.py 2. config.json
+	Step 2. Modify the config.json file based on cassandra cluster settings and keyspace
+
+	Example:config.json
+
+	{
+	  "CassandraHosts":["199.60.17.136", "199.60.17.173"],
+	  "KeySpace":"jmaity",
+	  "Item1Table": "pcyfreqitem1",
+	  "Bitmap2Table": "pcybitmap2",
+	  "RecommendTable": "recommendproducts",
+	  "PrimeNumber": 999917
+	}
+
+	Step 2.5: Preprocessing
+		We might need to install few packages not available globally
+		1. pip install --user cassandra-driver
+		2. pip install --user futures --upgrade -I
+		3. chmod 0711 ~/.local ~/.local/lib ~/.local/lib/python2.7 ~/.local/lib/python2.7/site-packages
+		4. export PYTHONPATH=/home/jmaity/.local/lib/python2.7/site-packages/
+	Step 3: Run the item_sets.py to get the output in output file
+		spark-submit --master=yarn-client --packages TargetHolding/pyspark-cassandra:0.3.5 item_sets.py /inputpath /path <support_thresold> <broadcast=0,1>
+		Example:
+		spark-submit --master=yarn-client --packages TargetHolding/pyspark-cassandra:0.3.5 item_sets.py /user/jmaity/profget /user/jmaity/profgetoutput 0
+		(For small tpch dataset we might need to set support thresold as 0) as there are no or very less data items
+
+		Test: to look at the recommended produts in cql shell
+		select * from recommendproducts limit 2000;
+
+		if we plan to use tpch2 them we might need to set broadcast=0 to use cassandra as intermediate storage for calculation
+		(example 
+			spark-submit --master=yarn-client --packages TargetHolding/pyspark-cassandra:0.3.5 item_sets.py /user/jmaity/profget 
+			/user/jmaity/profgetoutput 20 1)
+
+------------- If we want use the UI, TPCH dataset will not return any visual result, as it does not contain any cymax data --------
+
+--------------------------------------------------------------
+------------------- UI visualisation -------------------------
+--------------------------------------------------------------
+
+4. Insert sample recommended products
+(As we cannot provide you the actual dataset from cymax, but to test here are few sample)
+Insert few sample product for cymax
+
+INSERT INTO recommendproducts(productid1, productid2) VALUES(8031,440740);
+INSERT INTO recommendproducts(productid1, productid2) VALUES(8632,382202);
+INSERT INTO recommendproducts(productid1, productid2) VALUES(151638,151643);
+INSERT INTO recommendproducts(productid1, productid2) VALUES(159114,159172);
+INSERT INTO recommendproducts(productid1, productid2) VALUES(168221,168224);
+INSERT INTO recommendproducts(productid1, productid2) VALUES(168638,168694);
+INSERT INTO recommendproducts(productid1, productid2) VALUES(284011,429441);
+INSERT INTO recommendproducts(productid1, productid2) VALUES(382356,489765);
+INSERT INTO recommendproducts(productid1, productid2) VALUES(383150,383151);
+INSERT INTO recommendproducts(productid1, productid2) VALUES(435676,435677);
+INSERT INTO recommendproducts(productid1, productid2) VALUES(12661,13417);
+INSERT INTO recommendproducts(productid1, productid2) VALUES(12638,13417);
+INSERT INTO recommendproducts(productid1, productid2) VALUES(12646,13417);
+INSERT INTO recommendproducts(productid1, productid2) VALUES(12731,13417);
+INSERT INTO recommendproducts(productid1, productid2) VALUES(12706,13417);
+INSERT INTO recommendproducts(productid1, productid2) VALUES(247267,383150);
+
+5. Configure Flask to run UI enviroment
+
+go to the web folder
+run
+
+>> python app.py
+
+It will run Flask app server at 0.0.0.0:5000 port by default
+
+Run this url in browser,
+In the UI, type any one of the sample product id and Search.
+It will show the recommended product(s)
+
+Note: if we want to change the server address and port for flask server, we have to change the last line of the code in app.py
+
+
+
+
+

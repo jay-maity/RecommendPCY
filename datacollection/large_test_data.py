@@ -7,8 +7,6 @@ import pyspark_cassandra
 
 keyspace_input=sys.argv[1]
 output=sys.argv[2]
-#order=sys.argv[3:]
-#orders=",".join(order)
 
 def df_for(keyspace, table, split_size=1500):
     df = sqlContext.createDataFrame(sc.cassandraTable(keyspace, table, split_size=split_size).setName(table))
