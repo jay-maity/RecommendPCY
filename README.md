@@ -2,7 +2,7 @@
 
 It uses PCY algorithm to generate frequent item pairs and recomment product from there
 
-### Installation
+### Installation (Elaborative instructions are mentioned in RUNNING.txt file)
 
 It requires pyspark, [pyspark-cassandra](https://github.com/TargetHolding/pyspark-cassandra) driver to run.
 Also needs a [cassandra cluster](http://cassandra.apache.org/download/) to store data and intermediate calculations 
